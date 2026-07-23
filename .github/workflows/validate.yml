@@ -1,0 +1,91 @@
+name: Validate lean infrastructure cut
+
+on:
+  push:
+    branches:
+      - refactor/remove-embedded-infrastructure
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux · Rust and runtime contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Validate cut contract
+        run: python3 ci/validate_cut.py
+
+      - name: Check shell syntax
+        run: |
+          find runtime/payload-v1/bin -maxdepth 1 -type f -print0 | xargs -0 -r -n1 sh -n
+          shellcheck runtime/payload-v1/bin/*
+
+      - name: Cargo format
+        run: cargo fmt --all -- --check
+
+      - name: Cargo test
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  windows:
+    name: Windows · Installer and Rust
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate cut contract
+        shell: pwsh
+        run: python ci/validate_cut.py
+
+      - name: Cargo format
+        run: cargo fmt --all -- --check
+
+      - name: Cargo test
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Validate installer script syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path installer/build.ps1),
+            [ref]$null,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
