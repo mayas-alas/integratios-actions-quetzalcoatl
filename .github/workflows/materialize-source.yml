@@ -1,0 +1,116 @@
+name: Materialize and validate source tree
+
+on:
+  push:
+    branches:
+      - refactor/remove-embedded-infrastructure
+    paths:
+      - .bootstrap/READY
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-remove-embedded-infrastructure
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    name: Materialize source commit
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+    steps:
+      - name: Checkout transport branch
+        uses: actions/checkout@v4
+        with:
+          ref: refactor/remove-embedded-infrastructure
+          fetch-depth: 0
+
+      - name: Reconstruct and verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap/part-* | base64 --decode > /tmp/quetzalcoatl-source.zip
+          echo "c4c9647eb37cee544687742de620a35b0294849feea79e167f2ebe74e6911a34  /tmp/quetzalcoatl-source.zip" | sha256sum --check --strict
+          rm -rf /tmp/quetzalcoatl-source
+          mkdir -p /tmp/quetzalcoatl-source
+          unzip -q /tmp/quetzalcoatl-source.zip -d /tmp/quetzalcoatl-source
+          source_root="$(find /tmp/quetzalcoatl-source -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$source_root"
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a "$source_root"/. .
+          python3 ci/validate_cut.py
+
+      - name: Commit materialized source tree
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "refactor: remove embedded infrastructure provisioning"
+          git push origin HEAD:refactor/remove-embedded-infrastructure
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux · Rust and runtime contracts
+    needs: materialize
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout materialized commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.materialize.outputs.commit_sha }}
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Validate cut contract
+        run: python3 ci/validate_cut.py
+      - name: Check shell payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          find runtime/payload-v1/bin -maxdepth 1 -type f -print0 | xargs -0 -r -n1 sh -n
+          shellcheck runtime/payload-v1/bin/*
+      - name: Cargo format
+        run: cargo fmt --all -- --check
+      - name: Cargo test
+        run: cargo test --workspace --all-targets --locked
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  windows:
+    name: Windows · Installer and Rust
+    needs: materialize
+    runs-on: windows-latest
+    steps:
+      - name: Checkout materialized commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.materialize.outputs.commit_sha }}
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Validate cut contract
+        shell: pwsh
+        run: python ci/validate_cut.py
+      - name: Cargo format
+        run: cargo fmt --all -- --check
+      - name: Cargo test
+        run: cargo test --workspace --all-targets --locked
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Validate installer contracts
+        shell: pwsh
+        run: ./installer/build.ps1 -TestRebootContractOnly
