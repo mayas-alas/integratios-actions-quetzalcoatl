@@ -32,14 +32,13 @@ jobs:
           ref: refactor/remove-embedded-infrastructure
           fetch-depth: 0
 
-      - name: Reconstruct and verify cut bundle
+      - name: Reconstruct and hash-check cut bundle
         shell: bash
         run: |
           set -euo pipefail
           cat .bootstrap/bundle-* | base64 --decode > /tmp/lean-cut.bundle.gz
           echo "f900a6f44e38ed73f4f5e034bee4ccd4a5f96c3e879dbfaa7c85249594aade15  /tmp/lean-cut.bundle.gz" | sha256sum --check --strict
           gunzip /tmp/lean-cut.bundle.gz
-          git bundle verify /tmp/lean-cut.bundle
 
       - name: Rebuild from original repository history
         shell: bash
@@ -47,6 +46,7 @@ jobs:
           set -euo pipefail
           git clone --no-checkout https://gitlab.com/hectorb.yx/quetzalcoatl.git /tmp/quetzalcoatl-source
           git -C /tmp/quetzalcoatl-source checkout --detach "$SOURCE_COMMIT"
+          git -C /tmp/quetzalcoatl-source bundle verify /tmp/lean-cut.bundle
           git -C /tmp/quetzalcoatl-source fetch /tmp/lean-cut.bundle HEAD:refs/remotes/bundle/lean-cut
           git -C /tmp/quetzalcoatl-source checkout --detach "$CUT_COMMIT"
           test "$(git -C /tmp/quetzalcoatl-source rev-parse HEAD)" = "$CUT_COMMIT"
