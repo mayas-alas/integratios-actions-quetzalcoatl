@@ -1,3 +1,4 @@
 source_commit=c4338b0b96de62d2c673f80ad744d3297687da07
 cut_commit=a32bc5a855f0ddad8095163ef22cb2d8e8a83a8b
 bundle_sha256=f900a6f44e38ed73f4f5e034bee4ccd4a5f96c3e879dbfaa7c85249594aade15
+retry=2
