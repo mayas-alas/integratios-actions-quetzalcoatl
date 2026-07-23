@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - .github/workflows/materialize-focused-cut.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .bootstrap/READY
   workflow_dispatch:
 
 permissions:
