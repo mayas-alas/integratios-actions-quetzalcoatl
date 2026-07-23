@@ -1,4 +1,4 @@
-name: Materialize and validate source tree
+name: Materialize and validate focused cut
 
 on:
   push:
@@ -15,9 +15,13 @@ concurrency:
   group: materialize-remove-embedded-infrastructure
   cancel-in-progress: false
 
+env:
+  SOURCE_COMMIT: c4338b0b96de62d2c673f80ad744d3297687da07
+  CUT_COMMIT: a32bc5a855f0ddad8095163ef22cb2d8e8a83a8b
+
 jobs:
   materialize:
-    name: Materialize source commit
+    name: Materialize focused source commit
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.commit.outputs.commit_sha }}
@@ -28,20 +32,33 @@ jobs:
           ref: refactor/remove-embedded-infrastructure
           fetch-depth: 0
 
-      - name: Reconstruct and verify source archive
+      - name: Reconstruct and verify cut bundle
         shell: bash
         run: |
           set -euo pipefail
-          cat .bootstrap/part-* | base64 --decode > /tmp/quetzalcoatl-source.zip
-          echo "c4c9647eb37cee544687742de620a35b0294849feea79e167f2ebe74e6911a34  /tmp/quetzalcoatl-source.zip" | sha256sum --check --strict
-          rm -rf /tmp/quetzalcoatl-source
-          mkdir -p /tmp/quetzalcoatl-source
-          unzip -q /tmp/quetzalcoatl-source.zip -d /tmp/quetzalcoatl-source
-          source_root="$(find /tmp/quetzalcoatl-source -mindepth 1 -maxdepth 1 -type d -print -quit)"
-          test -n "$source_root"
+          cat .bootstrap/bundle-* | base64 --decode > /tmp/lean-cut.bundle.gz
+          echo "f900a6f44e38ed73f4f5e034bee4ccd4a5f96c3e879dbfaa7c85249594aade15  /tmp/lean-cut.bundle.gz" | sha256sum --check --strict
+          gunzip /tmp/lean-cut.bundle.gz
+          git bundle verify /tmp/lean-cut.bundle
+
+      - name: Rebuild from original repository history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout https://gitlab.com/hectorb.yx/quetzalcoatl.git /tmp/quetzalcoatl-source
+          git -C /tmp/quetzalcoatl-source checkout --detach "$SOURCE_COMMIT"
+          git -C /tmp/quetzalcoatl-source fetch /tmp/lean-cut.bundle HEAD:refs/remotes/bundle/lean-cut
+          git -C /tmp/quetzalcoatl-source checkout --detach "$CUT_COMMIT"
+          test "$(git -C /tmp/quetzalcoatl-source rev-parse HEAD)" = "$CUT_COMMIT"
+
+      - name: Replace transport with focused source tree
+        shell: bash
+        run: |
+          set -euo pipefail
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp -a "$source_root"/. .
+          rsync -a --exclude='.git/' /tmp/quetzalcoatl-source/ ./
           python3 ci/validate_cut.py
+          find runtime/payload-v1/bin -maxdepth 1 -type f -print0 | xargs -0 -r -n1 sh -n
 
       - name: Commit materialized source tree
         id: commit
